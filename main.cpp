@@ -1,3 +1,6 @@
+/* Erik Schluter
+ * 1/28/2016
+ */
 #include "FrameProcessing.h"
 
 int main(int argc, char *argv[]) {

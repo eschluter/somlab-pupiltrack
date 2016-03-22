@@ -1,3 +1,6 @@
+/* Erik Schluter
+ * 1/28/2016
+ */
 #pragma once
 
 #include "opencv2/opencv.hpp"
