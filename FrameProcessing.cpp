@@ -4,8 +4,8 @@
 
 namespace Ptrack {
 
-static atomic_bool shouldExit	= false;
-static atomic_char msgFlag		= 0x0;
+static atomic_bool shouldExit = false;
+static atomic_char msgFlag = 0x0;
 
 FrameProcessing::FrameProcessing()
 :

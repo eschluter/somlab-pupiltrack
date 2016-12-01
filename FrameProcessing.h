@@ -12,30 +12,30 @@ namespace Ptrack {
 class FrameProcessing {
 
 	private:
-		VideoCapture			cap;	// camera device
-		Mat						frame;  // raw image
-		Mat						gframe; // grey scaled image copy
-		vector<vector<Point> >	contours;
-		vector<Vec4i>			hierarchy;
-		int						thresh;
-		const unsigned int		bufsize;
+		VideoCapture cap;	// camera device
+		Mat frame;			// raw image
+		Mat gframe;			// grey scaled image copy
+		vector<vector<Point>> contours;
+		vector<Vec4i> hierarchy;
+		int thresh;
+		const unsigned int bufsize;
 		
-		HANDLE					hThread;
-		bool					pause;
+		HANDLE	hThread;
+		bool	pause;
 
 	public:
 		FrameProcessing();
 		~FrameProcessing();
 
 	public:
-		int						process();
-		void					StartMessengerThread();
+		int		process();
+		void	StartMessengerThread();
 
 	private:
-		void					applyMorphologyOperation(Mat*, Mat*, int, int);
+		void	applyMorphologyOperation(Mat*, Mat*, int, int);
 
-		static DWORD WINAPI		StartMessenger(LPVOID pParam);
-		void					CheckControlMessages();
+		static DWORD WINAPI	StartMessenger(LPVOID pParam);
+		void				CheckControlMessages();
 
 };
 
