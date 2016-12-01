@@ -60,11 +60,13 @@ void PupiltrackThreadManager::runPupiltrack() {
 
 	// signal thread executing
 	PupiltrackInitEvent.SetEvent();
+	Sleep(200); //give the pupiltrack process a startup time buffer just in case
+	WriteToPipe('r'); // pupiltrack processing thread is paused on startup - wake it
 	executionState = Going;
 
 	while (!shouldExit) {
 
-		pupiltrackThreadReturn = (::WaitForMultipleObjects(3, pupiltrackTimingHandles, false, 0));
+		pupiltrackThreadReturn = (::WaitForMultipleObjects(3, pupiltrackTimingHandles, false, 1));
 		
 		switch (pupiltrackThreadReturn) {
 			case WAIT_OBJECT_0:
@@ -88,8 +90,9 @@ void PupiltrackThreadManager::runPupiltrack() {
 				break;
 		}
 		// read eye position from data pipe
-		if (!isPaused)
+		if (!isPaused) {
 			ReadFromPipe();
+		}
 	}
 }
 
@@ -152,9 +155,9 @@ void PupiltrackThreadManager::ErrorExit(PTSTR lpszFunction) {
 }
 
 void PupiltrackThreadManager::CreateChildProcess() {
-	PROCESS_INFORMATION piProcInfo; 
+	PROCESS_INFORMATION piProcInfo;
 	STARTUPINFO siStartInfo;
-	BOOL bSuccess = FALSE; 
+	BOOL bSuccess = FALSE;
 	// Set up members of the PROCESS_INFORMATION structure. 
 	ZeroMemory( &piProcInfo, sizeof(PROCESS_INFORMATION) );
 
@@ -183,39 +186,25 @@ void PupiltrackThreadManager::CreateChildProcess() {
 	if ( ! bSuccess )
 		ErrorExit(TEXT("CreateProcess"));
 	else {
-		// Close handles to the child process and its primary thread.
-		// Some applications might keep these handles to monitor the status
-		// of the child process, for example. 
+		// Close handles to the child process and its primary thread. 
 		CloseHandle(piProcInfo.hProcess);
 		CloseHandle(piProcInfo.hThread);
-		CloseHandle(g_hChildStd_OUT_Wr);
 	}
 }
 
 void PupiltrackThreadManager::ReadFromPipe() {
 	// Read output from the child process's pipe for STDOUT
-	// and write to the parent process's pipe for STDOUT. 
-	// Stop when there is no more data.
-	int bytesRead = 0;
+	DWORD bytesAvail = 0;
 	DWORD dwRead;
-	DWORD dwWritten;
 	CHAR chBuf[20];
 	BOOL bSuccess = FALSE;
 	stringstream message;
 	HANDLE hParentStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
 
-	for (;;) {
-		bSuccess = ReadFile( g_hChildStd_OUT_Rd, chBuf, 20, &dwRead, NULL);
-		if( ! bSuccess || dwRead == 0 ) break;
-		bytesRead++;
-		bSuccess = WriteFile(hParentStdOut, chBuf, dwRead, &dwWritten, NULL);
-		if (! bSuccess ) break;
-	}
-	if (bytesRead > 0) {
-		if (chBuf[0] == 'p') {
-			PupiltrackPauseEvent.SetEvent();
-			pDoc->flipEyetrackInputButton();
-		} else {
+	PeekNamedPipe(g_hChildStd_OUT_Rd, NULL, 0, NULL, &bytesAvail, NULL);
+	if (bytesAvail) {
+		bSuccess = ReadFile(g_hChildStd_OUT_Rd, chBuf, 20, &dwRead, NULL);
+		if (bSuccess && (dwRead > 0)) {
 			char *nextT;
 			cX = atof(strtok_s(chBuf, ",", &nextT));
 			cY = atof(strtok_s(NULL, ",", &nextT));
@@ -225,11 +214,11 @@ void PupiltrackThreadManager::ReadFromPipe() {
 }
 
 void PupiltrackThreadManager::WriteToPipe(char toWrite) {
-	DWORD dwRead, dwWritten;
+	DWORD dwWritten;
 	CHAR chBuf[2];
 	chBuf[0] = toWrite;
 	// send into pipe
-	WriteFile(g_hChildStd_IN_Wr, chBuf, dwRead, &dwWritten, NULL);
+	WriteFile(g_hChildStd_IN_Wr, chBuf, 2, &dwWritten, NULL);
 }
 		
 

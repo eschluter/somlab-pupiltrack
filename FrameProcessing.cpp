@@ -1,23 +1,18 @@
-/* Erik Schluter
- * 1/28/2016
- */
 #include "FrameProcessing.h"
 #include <sstream>
+#include <atomic>
+
+namespace Ptrack {
+
+static atomic_bool shouldExit	= false;
+static atomic_char msgFlag		= 0x0;
 
 FrameProcessing::FrameProcessing()
 :
 thresh(75),
-bufsize(20)
+bufsize(20),
+pause(true)
 {
-}
-
-FrameProcessing::FrameProcessing(HANDLE in, HANDLE out)
-:
-thresh(75),
-bufsize(20)
-{
-	hStdin	= in;
-	hStdout	= out;
 }
 
 FrameProcessing::~FrameProcessing() {
@@ -25,84 +20,44 @@ FrameProcessing::~FrameProcessing() {
 
 int FrameProcessing::process() {
 
-	bool	pause		= false;
-	int		msgboxID;
-	CHAR	pStr[2]		= "p";
 	CHAR	chBuf[20];
-	CHAR	readBuf[2];
-	DWORD	dwRead, dwWritten;
-	DWORD	bytesAvail	= 0;
-	BOOL	bSuccess;
+	DWORD	dwWritten;
 	stringstream tempStr;
-	
-	// Initialize default camera
-	VideoCapture	cap;
-	cap.open(0);
+	HANDLE	hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
 
-	// attempt to connect to camera device (dev 0 is default)
-	while(!cap.isOpened()) {
-		if (!pause) {
-			msgboxID = MessageBox(NULL, "No camera connected! Connect usb camera then press RETRY\n Or select CANCEL to use Arrington input.", 
-										"video error", MB_RETRYCANCEL);
-			switch (msgboxID) {
-				case IDRETRY:
-					// try to connect again
-					cap.open(0);
-					break;
-				case IDCANCEL:
-					// send pause signal to eyetrack which switches to arrington input
-					pause = true;
-					WriteFile(hStdout, pStr, bufsize, &dwWritten, NULL);
-					break;
-			}
-		}
-		// check for control messages from Eyetrack application
-		PeekNamedPipe(hStdin, NULL, 0, NULL, &bytesAvail, NULL);
-		if (bytesAvail) {
-			bSuccess = ReadFile(hStdin, readBuf, 2, &dwRead, NULL);
-			if (bSuccess && (dwRead > 0)) {
-				switch (readBuf[0]) {
-					case 'r':
-						pause = false;
-						break;
-					case 'k':
-						return 0;
-				}
-			}
-		}
+	if (hStdout == INVALID_HANDLE_VALUE) {
+		MessageBox(NULL, "Invalid out pipe handle", "Error", MB_OK);
+		ExitProcess(1);
 	}
 
-	// Initialize camera window
-	namedWindow("Pupil Detection", CV_WINDOW_AUTOSIZE);
-	// Initialize trackbar for threshold value
-	createTrackbar("Threshold", "Pupil Detection", &thresh, 270);
+	// startup messenger
+	StartMessengerThread();
 
-	while (true) {
+	while (!shouldExit) {
 		if (!pause) {
 			cap >> frame;
-			cvtColor(frame, frame2, CV_BGR2GRAY);
-			GaussianBlur(frame2, frame2, Size(5,5), 2, 2);
-			threshold(frame2, frame2, thresh, 255, THRESH_BINARY_INV);
-			applyMorphologyOperation(&frame2, &frame2, 4, MORPH_ELLIPSE, MORPH_OPEN);
-			applyMorphologyOperation(&frame2, &frame2, 20, MORPH_ELLIPSE, MORPH_CLOSE);
-			f_frame = frame2.clone();
-			findContours(f_frame, contours, hierarchy, RETR_LIST, CHAIN_APPROX_NONE, Point(0,0));
+			cvtColor(frame, gframe, CV_BGR2GRAY);
+			GaussianBlur(gframe, gframe, Size(5, 5), 2, 2);
+			threshold(gframe, gframe, thresh, 255, THRESH_BINARY_INV);
+			applyMorphologyOperation(&gframe, &gframe, 4, MORPH_OPEN);
+			applyMorphologyOperation(&gframe, &gframe, 20, MORPH_CLOSE);
+			findContours(gframe, contours, hierarchy, RETR_LIST, CHAIN_APPROX_NONE, Point(0, 0));
 
 			int i = 0;
 			if (contours.size() > 0) {
 				size_t count = contours[i].size();
-				if( count < 6 )
+				if (count < 6)
 					continue;
 
 				Mat pointsf;
 				Mat(contours[i]).convertTo(pointsf, CV_32F);
 				RotatedRect box = fitEllipse(pointsf);
 
-				if( MAX(box.size.width, box.size.height) > MIN(box.size.width, box.size.height)*30 )
+				if (MAX(box.size.width, box.size.height) > MIN(box.size.width, box.size.height) * 30)
 					continue;
 
-				ellipse(frame, box, Scalar(0,0,255), 1, CV_AA);
-				ellipse(frame, box.center, box.size*0.5f, box.angle, 0, 360, Scalar(0,255,255), 1, CV_AA);
+				ellipse(frame, box, Scalar(0, 0, 255), 1, CV_AA);
+				ellipse(frame, box.center, box.size*0.5f, box.angle, 0, 360, Scalar(0, 255, 255), 1, CV_AA);
 				// package data to send
 				tempStr.str(std::string());
 				tempStr << box.center.x << "," << box.center.y;
@@ -113,36 +68,81 @@ int FrameProcessing::process() {
 			imshow("Pupil Detection", frame);
 			waitKey(1);
 		}
-		// check for control messages from Eyetrack application
-		// 'p' - pause, 'r' - resume, 'k' - kill process and exit
-		PeekNamedPipe(hStdin, NULL, 0, NULL, &bytesAvail, NULL);
-		if (bytesAvail) {
-			bSuccess = ReadFile(hStdin, readBuf, 2, &dwRead, NULL);
-			if (bSuccess && (dwRead > 0)) {
-				switch (readBuf[0]) {
-					case 'p':
-						destroyWindow("Pupil Detection");
-						pause = true;
-						break;
-					case 'r':
-						namedWindow("Pupil Detection", CV_WINDOW_AUTOSIZE);
-						createTrackbar("Threshold", "Pupil Detection", &thresh, 270);
-						pause = false;
-						break;
-					case 'k':
-						return 0;
-				}
+		switch (msgFlag) {
+		case 'p':
+			destroyWindow("Pupil Detection");
+			cap.release();
+			pause = true;
+			msgFlag = 0;
+			break;
+		case 'r':
+			while (!cap.isOpened() && !shouldExit) {
+				cap.open(0);
 			}
+			namedWindow("Pupil Detection", CV_WINDOW_AUTOSIZE);
+			createTrackbar("Threshold", "Pupil Detection", &thresh, 270);
+			pause = false;
+			msgFlag = 0;
 		}
 	}
 	return 0;
 }
 
 
-void FrameProcessing::applyMorphologyOperation(Mat *src, Mat *dest, int kSize, int kType, int op) {
+void FrameProcessing::applyMorphologyOperation(Mat *src, Mat *dest, int kSize, int op) {
 
-	Mat element = getStructuringElement(MORPH_RECT, Size(2*kSize + 1, 2*kSize + 1), Point(kSize, kSize));
+	Mat element = getStructuringElement(MORPH_RECT, Size(2 * kSize + 1, 2 * kSize + 1), Point(kSize, kSize));
 
 	// Apply operation
 	morphologyEx(*src, *dest, op, element);
+}
+
+// MESSENGER THREAD-----------------------------------------------------
+DWORD WINAPI FrameProcessing::StartMessenger(LPVOID pParam) {
+	FrameProcessing* fp = (FrameProcessing*)pParam;
+	fp->CheckControlMessages();
+	return 0;
+}
+
+void FrameProcessing::StartMessengerThread() {
+	DWORD threadId;
+	hThread = CreateThread(NULL, 0, StartMessenger, NULL, 0, &threadId);
+}
+
+void FrameProcessing::CheckControlMessages() {
+
+	CHAR	readBuf[]{'\0','\0'};
+	DWORD	dwRead{0};
+	DWORD	bytesAvail{0};
+	HANDLE	hStdin = GetStdHandle(STD_INPUT_HANDLE);
+
+	if (hStdin == INVALID_HANDLE_VALUE) {
+		MessageBox(NULL, "Invalid in pipe handle", "Error", MB_OK);
+		ExitProcess(1);
+	}
+
+	// check for control messages from Eyetrack application
+	// 'p' - pause, 'r' - resume, 'k' - kill process and exit
+	while (!shouldExit) {
+		PeekNamedPipe(hStdin, NULL, 0, NULL, &bytesAvail, NULL);
+		if (bytesAvail) {
+			BOOL bSuccess = ReadFile(hStdin, readBuf, 2, &dwRead, NULL);
+			if (bSuccess && (dwRead > 0)) {
+				switch (readBuf[0]) {
+				case 'p':
+					msgFlag = 0x70;
+					break;
+				case 'r':
+					msgFlag = 0x72;
+					break;
+				case 'k':
+					shouldExit = true;
+					return;
+				}
+			}
+		}
+		Sleep(100);
+	}
+}
+
 }
