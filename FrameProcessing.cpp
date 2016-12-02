@@ -106,7 +106,7 @@ DWORD WINAPI FrameProcessing::StartMessenger(LPVOID pParam) {
 
 void FrameProcessing::StartMessengerThread() {
 	DWORD threadId;
-	hThread = CreateThread(NULL, 0, StartMessenger, NULL, 0, &threadId);
+	hThread = CreateThread(NULL, 0, StartMessenger, this, 0, &threadId);
 }
 
 void FrameProcessing::CheckControlMessages() {

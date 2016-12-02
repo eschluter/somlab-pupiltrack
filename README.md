@@ -18,5 +18,5 @@ If compiling on VS 2015, you can use a later version of opencv (I used 3.1.0) an
 	* opencv_world310.lib
 	
 
-Erik Schluter
+Erik Schluter,
 March 28, 2016
