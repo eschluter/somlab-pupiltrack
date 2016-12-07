@@ -17,6 +17,10 @@ If compiling on VS 2015, you can use a later version of opencv (I used 3.1.0) an
 
 	* opencv_world310.lib
 	
+### Using point grey cameras
+
+Point Grey cameras are good quality high resolution cameras which we use in the somlab. The OpenCV camera capture machinery (VideoCapture class) does not work with Point Grey drivers as Point Grey supplies there own functionality (FlyCapture2 SDK). To use a Point Grey camera you must also statically link FlyCapture2_v*.lib and dynamically link with the equivalent dll. You can download the Point Grey SDK [here](http://ptgrey.com/support/downloads).
+	
 
 Erik Schluter,
 March 28, 2016

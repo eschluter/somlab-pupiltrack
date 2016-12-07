@@ -11,6 +11,9 @@ FrameProcessing::FrameProcessing()
 :
 thresh(75),
 bufsize(20),
+#ifdef PTGREY
+bInitialized(false),
+#endif
 pause(true)
 {
 }
@@ -35,7 +38,15 @@ int FrameProcessing::process() {
 
 	while (!shouldExit) {
 		if (!pause) {
+#ifdef PTGREY
+			cam.RetrieveBuffer(&rawImg);
+			tempImg = ConvertImageToOpenCV(&rawImg);
+			frame = cvarrToMat(tempImg);
+			cvReleaseImageHeader(&tempImg);
+			cvReleaseImage(&tempImg);
+#else
 			cap >> frame;
+#endif
 			cvtColor(frame, gframe, CV_BGR2GRAY);
 			GaussianBlur(gframe, gframe, Size(5, 5), 2, 2);
 			threshold(gframe, gframe, thresh, 255, THRESH_BINARY_INV);
@@ -43,14 +54,13 @@ int FrameProcessing::process() {
 			applyMorphologyOperation(&gframe, &gframe, 20, MORPH_CLOSE);
 			findContours(gframe, contours, hierarchy, RETR_LIST, CHAIN_APPROX_NONE, Point(0, 0));
 
-			int i = 0;
 			if (contours.size() > 0) {
-				size_t count = contours[i].size();
+				size_t count = contours[0].size();
 				if (count < 6)
 					continue;
 
 				Mat pointsf;
-				Mat(contours[i]).convertTo(pointsf, CV_32F);
+				Mat(contours[0]).convertTo(pointsf, CV_32F);
 				RotatedRect box = fitEllipse(pointsf);
 
 				if (MAX(box.size.width, box.size.height) > MIN(box.size.width, box.size.height) * 30)
@@ -71,14 +81,53 @@ int FrameProcessing::process() {
 		switch (msgFlag) {
 		case 'p':
 			destroyWindow("Pupil Detection");
+#ifdef PTGREY
+			cam.StopCapture();
+			cam.Disconnect();
+#else
 			cap.release();
+#endif
 			pause = true;
 			msgFlag = 0;
 			break;
 		case 'r':
+#ifdef PTGREY
+			// retrieve first camera's id
+			err = busMgr.GetCameraFromIndex(0, &guid);
+			if (err != PGRERROR_OK) {
+				MessageBox(NULL, (LPCSTR)err.GetDescription(), "Error", MB_OK);
+				while ( (err != PGRERROR_OK) && !shouldExit)
+					err = busMgr.GetCameraFromIndex(0, &guid);
+			}
+			// attempt camera connect
+			err = cam.Connect(&guid);
+			if (err != PGRERROR_OK) {
+				MessageBox(NULL, (LPCSTR)err.GetDescription(), "Error", MB_OK);
+				while ( (err != PGRERROR_OK) && !shouldExit)
+					err = cam.Connect(&guid);
+			}
+			// set frame rate
+			VideoMode vm;
+			FrameRate fr;
+			err = cam.GetVideoModeAndFrameRate(&vm, &fr);
+			if (err != PGRERROR_OK) {
+				err = cam.SetVideoModeAndFrameRate(vm, FRAMERATE_60);
+				if (err != PGRERROR_OK) {
+					MessageBox(NULL, (LPCSTR)err.GetDescription(), "Error", MB_OK);
+				}
+			}
+			// start capture
+			err = cam.StartCapture();
+			if (err != PGRERROR_OK) {
+				MessageBox(NULL, (LPCSTR)err.GetDescription(), "Error", MB_OK);
+				while ((err != PGRERROR_OK) && !shouldExit)
+					err = cam.StartCapture();
+			}
+#else
 			while (!cap.isOpened() && !shouldExit) {
 				cap.open(0);
 			}
+#endif
 			namedWindow("Pupil Detection", CV_WINDOW_AUTOSIZE);
 			createTrackbar("Threshold", "Pupil Detection", &thresh, 270);
 			pause = false;
@@ -144,5 +193,120 @@ void FrameProcessing::CheckControlMessages() {
 		Sleep(100);
 	}
 }
+
+#ifdef PTGREY
+// This method adapted from Point Grey Flycapture example program
+IplImage* FrameProcessing::ConvertImageToOpenCV(Image* pImage)
+{
+	IplImage* cvImage = NULL;
+	bool bColor = true;
+	CvSize mySize;
+	mySize.height = pImage->GetRows();
+	mySize.width = pImage->GetCols();
+
+	switch (pImage->GetPixelFormat())
+	{
+	case PIXEL_FORMAT_MONO8:	 cvImage = cvCreateImageHeader(mySize, 8, 1);
+		cvImage->depth = IPL_DEPTH_8U;
+		cvImage->nChannels = 1;
+		bColor = false;
+		break;
+	case PIXEL_FORMAT_411YUV8:   cvImage = cvCreateImageHeader(mySize, 8, 3);
+		cvImage->depth = IPL_DEPTH_8U;
+		cvImage->nChannels = 3;
+		break;
+	case PIXEL_FORMAT_422YUV8:   cvImage = cvCreateImageHeader(mySize, 8, 3);
+		cvImage->depth = IPL_DEPTH_8U;
+		cvImage->nChannels = 3;
+		break;
+	case PIXEL_FORMAT_444YUV8:   cvImage = cvCreateImageHeader(mySize, 8, 3);
+		cvImage->depth = IPL_DEPTH_8U;
+		cvImage->nChannels = 3;
+		break;
+	case PIXEL_FORMAT_RGB8:      cvImage = cvCreateImageHeader(mySize, 8, 3);
+		cvImage->depth = IPL_DEPTH_8U;
+		cvImage->nChannels = 3;
+		break;
+	case PIXEL_FORMAT_MONO16:    cvImage = cvCreateImageHeader(mySize, 16, 1);
+		cvImage->depth = IPL_DEPTH_16U;
+		cvImage->nChannels = 1;
+		bColor = false;
+		break;
+	case PIXEL_FORMAT_RGB16:     cvImage = cvCreateImageHeader(mySize, 16, 3);
+		cvImage->depth = IPL_DEPTH_16U;
+		cvImage->nChannels = 3;
+		break;
+	case PIXEL_FORMAT_S_MONO16:  cvImage = cvCreateImageHeader(mySize, 16, 1);
+		cvImage->depth = IPL_DEPTH_16U;
+		cvImage->nChannels = 1;
+		bColor = false;
+		break;
+	case PIXEL_FORMAT_S_RGB16:   cvImage = cvCreateImageHeader(mySize, 16, 3);
+		cvImage->depth = IPL_DEPTH_16U;
+		cvImage->nChannels = 3;
+		break;
+	case PIXEL_FORMAT_RAW8:      cvImage = cvCreateImageHeader(mySize, 8, 3);
+		cvImage->depth = IPL_DEPTH_8U;
+		cvImage->nChannels = 3;
+		break;
+	case PIXEL_FORMAT_RAW16:     cvImage = cvCreateImageHeader(mySize, 8, 3);
+		cvImage->depth = IPL_DEPTH_8U;
+		cvImage->nChannels = 3;
+		break;
+	case PIXEL_FORMAT_MONO12:
+		MessageBox(NULL, "Not supported in OpenCV", "Error", MB_OK);
+		bColor = false;
+		break;
+	case PIXEL_FORMAT_RAW12:
+		MessageBox(NULL, "Not supported in OpenCV", "Error", MB_OK);
+		break;
+	case PIXEL_FORMAT_BGR:       cvImage = cvCreateImageHeader(mySize, 8, 3);
+		cvImage->depth = IPL_DEPTH_8U;
+		cvImage->nChannels = 3;
+		break;
+	case PIXEL_FORMAT_BGRU:      cvImage = cvCreateImageHeader(mySize, 8, 4);
+		cvImage->depth = IPL_DEPTH_8U;
+		cvImage->nChannels = 4;
+		break;
+	case PIXEL_FORMAT_RGBU:      cvImage = cvCreateImageHeader(mySize, 8, 4);
+		cvImage->depth = IPL_DEPTH_8U;
+		cvImage->nChannels = 4;
+		break;
+	default:
+		MessageBox(NULL, "Unknown pixel type", "Error", MB_OK);
+		return NULL;
+	}
+
+	if (bColor) {
+		if (!bInitialized) {
+			colorImage.SetData(new unsigned char[pImage->GetCols() * pImage->GetRows() * 3], pImage->GetCols() * pImage->GetRows() * 3);
+			bInitialized = true;
+		}
+
+		pImage->Convert(PIXEL_FORMAT_BGR, &colorImage); //needs to be as BGR to be saved
+
+		cvImage->width = colorImage.GetCols();
+		cvImage->height = colorImage.GetRows();
+		cvImage->widthStep = colorImage.GetStride();
+
+		cvImage->origin = 0; //interleaved color channels
+
+		cvImage->imageDataOrigin = (char*)colorImage.GetData(); //DataOrigin and Data same pointer, no ROI
+		cvImage->imageData = (char*)(colorImage.GetData());
+		cvImage->widthStep = colorImage.GetStride();
+		cvImage->nSize = sizeof(IplImage);
+		cvImage->imageSize = cvImage->height * cvImage->widthStep;
+	}
+	else
+	{
+		cvImage->imageDataOrigin = (char*)(pImage->GetData());
+		cvImage->imageData = (char*)(pImage->GetData());
+		cvImage->widthStep = pImage->GetStride();
+		cvImage->nSize = sizeof(IplImage);
+		cvImage->imageSize = cvImage->height * cvImage->widthStep;
+	}
+	return cvImage;
+}
+#endif
 
 }
